@@ -1,12 +1,10 @@
 from io import BytesIO
 from pathlib import Path
 
-import av
 import cv2
 import numpy as np
 import streamlit as st
 from PIL import Image
-from streamlit_webrtc import RTCConfiguration, VideoProcessorBase, WebRtcMode, webrtc_streamer
 
 
 st.set_page_config(
@@ -224,16 +222,6 @@ def detect_face_eye_smile(image_bgr: np.ndarray, settings: dict[str, float | int
     return output, {"faces": len(faces), "eyes": eye_count, "smiles": smile_count}
 
 
-class FaceEyeSmileProcessor(VideoProcessorBase):
-    def __init__(self, settings: dict[str, float | int]):
-        self.settings = settings
-
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        image_bgr = frame.to_ndarray(format="bgr24")
-        detected_image, _ = detect_face_eye_smile(image_bgr, self.settings)
-        return av.VideoFrame.from_ndarray(detected_image, format="bgr24")
-
-
 def image_file_to_bgr(image_file) -> np.ndarray:
     image = Image.open(BytesIO(image_file.getvalue())).convert("RGB")
     image_rgb = np.array(image)
@@ -249,7 +237,7 @@ def bgr_to_png_bytes(image_bgr: np.ndarray) -> bytes:
 
 st.markdown('<div class="main-title">Face, Eye and Smile Detection App</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="subtitle">Detect faces, eyes, and smiles from a live camera, camera photo, or uploaded image.</div>',
+    '<div class="subtitle">Detect faces, eyes, and smiles from your camera photo or uploaded image.</div>',
     unsafe_allow_html=True,
 )
 
@@ -274,7 +262,7 @@ with st.sidebar:
     smile_neighbors = st.slider("Smile accuracy", 10, 35, 22)
 
     st.header("Camera")
-    st.caption("Live camera needs localhost or HTTPS browser permission.")
+    st.caption("Camera input works on localhost or deployed HTTPS links.")
 
 settings = {
     "face_scale": face_scale,
@@ -297,33 +285,35 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tabs = st.tabs(["Live Camera", "Camera Photo / Upload"])
+tabs = st.tabs(["Take Photo", "Upload Image"])
 
 with tabs[0]:
-    st.subheader("Live Camera Detection")
+    st.subheader("Camera Photo Detection")
+    st.caption("Allow browser camera permission, capture a photo, and the app will detect face, eye, and smile areas.")
+    image_input = st.camera_input("Take a photo")
+    if image_input is not None:
+        input_bgr = image_file_to_bgr(image_input)
+        output_bgr, counts = detect_face_eye_smile(input_bgr, settings)
+        output_rgb = cv2.cvtColor(output_bgr, cv2.COLOR_BGR2RGB)
 
-    rtc_configuration = RTCConfiguration(
-        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-    )
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Faces", counts["faces"])
+        col_b.metric("Eyes", counts["eyes"])
+        col_c.metric("Smiles", counts["smiles"])
 
-    webrtc_streamer(
-        key="face-eye-smile-live-camera",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=rtc_configuration,
-        video_processor_factory=lambda: FaceEyeSmileProcessor(settings),
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
+        st.image(output_rgb, caption="Detection Result", use_container_width=True)
+        st.download_button(
+            "Download Result",
+            data=bgr_to_png_bytes(output_bgr),
+            file_name="face_eye_smile_detection_result.png",
+            mime="image/png",
+            key="download_camera_result",
+        )
 
 with tabs[1]:
-    st.subheader("Image Detection")
-    source = st.radio("Image source", ["Take Photo", "Upload Image"], horizontal=True)
-
+    st.subheader("Upload Image Detection")
     image_input = None
-    if source == "Take Photo":
-        image_input = st.camera_input("Take a photo")
-    else:
-        image_input = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"])
+    image_input = st.file_uploader("Upload image", type=["jpg", "jpeg", "png"])
 
     if image_input is not None:
         input_bgr = image_file_to_bgr(image_input)
@@ -341,4 +331,5 @@ with tabs[1]:
             data=bgr_to_png_bytes(output_bgr),
             file_name="face_eye_smile_detection_result.png",
             mime="image/png",
+            key="download_upload_result",
         )
